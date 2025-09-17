@@ -85,10 +85,33 @@ impl DatabaseInterface for Database {
     where F: Fn(&Vec<String>) -> bool {
         if let Some(table) = self.tables.get(table_name) {
             println!("Selecting from table: {}", table_name);
-            let rows = table.select_rows(predicate);
-            for row in rows {
-                for value in &row {
-                    print!("{} ", value);
+            let rows = table.select_rows(&predicate);
+            // Print header
+            let col_indices: Vec<_> = if columns == vec!["*"] {
+                (0..table.columns.len()).collect()
+            } else {
+                columns.iter().filter_map(|c| table.columns.iter().position(|tc| tc == c)).collect()
+            };
+            let header: Vec<_> = col_indices.iter().map(|&i| &table.columns[i]).collect();
+            let col_widths: Vec<_> = col_indices.iter().map(|&i| {
+                let max_val = rows.iter().map(|row| row.get(i).map(|v| v.len()).unwrap_or(0)).max().unwrap_or(0);
+                std::cmp::max(table.columns[i].len(), max_val)
+            }).collect();
+            // Print header row
+            for (h, w) in header.iter().zip(&col_widths) {
+                print!("{:<width$} ", h, width = w);
+            }
+            println!();
+            // Print separator
+            for w in &col_widths {
+                print!("{:-<width$}-", "", width = *w);
+            }
+            println!();
+            // Print rows
+            for row in &rows {
+                for (col_idx, w) in col_indices.iter().zip(&col_widths) {
+                    let val = row.get(*col_idx).map(|s| s.as_str()).unwrap_or("");
+                    print!("{:<width$} ", val, width = w);
                 }
                 println!();
             }
