@@ -1,40 +1,45 @@
 mod query;
 mod sql;
-use query::query_to_predicate;
-use sql::execute_sql;
-// main.rs
 mod database;
 mod table;
 mod row;
 
 use database::{Database, DatabaseInterface};
-
+use sql::execute_sql;
 fn main() {
     // Create a new database
     let mut my_database = Database::new();
 
-    // Create a table with columns: "id", "name", "age"
-    let columns = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    my_database.create_table("Users", columns);
+    // --- SQL CREATE TABLE with PRIMARY KEY and UNIQUE ---
+    println!("\n-- SQL CREATE TABLE with PRIMARY KEY and UNIQUE --");
+    execute_sql(&mut my_database, "CREATE TABLE Users (id PRIMARY KEY, name, email UNIQUE, age)");
 
-    // Insert some rows into the "Users" table
-    my_database.insert("Users", vec!["1".to_string(), "Alice".to_string(), "30".to_string()]);
-    my_database.insert("Users", vec!["2".to_string(), "Bob".to_string(), "25".to_string()]);
+    // Insert valid rows
+    println!("\n-- SQL INSERT valid rows --");
+    execute_sql(&mut my_database, "INSERT INTO Users (id, name, email, age) VALUES (1, 'Alice', 'alice@example.com', 30)");
+    execute_sql(&mut my_database, "INSERT INTO Users (id, name, email, age) VALUES (2, 'Bob', 'bob@example.com', 25)");
 
+    // Attempt to insert duplicate primary key
+    println!("\n-- SQL INSERT duplicate PRIMARY KEY (should fail) --");
+    execute_sql(&mut my_database, "INSERT INTO Users (id, name, email, age) VALUES (1, 'Carol', 'carol@example.com', 22)");
 
-    // --- SQL-like query examples ---
-    println!("\n-- SQL-like SELECT --");
-    execute_sql(&mut my_database, "SELECT * FROM Users WHERE age > 25");
+    // Attempt to insert duplicate unique column
+    println!("\n-- SQL INSERT duplicate UNIQUE (should fail) --");
+    execute_sql(&mut my_database, "INSERT INTO Users (id, name, email, age) VALUES (3, 'Dave', 'alice@example.com', 28)");
 
-    println!("\n-- SQL-like INSERT --");
-    execute_sql(&mut my_database, "INSERT INTO Users (id, name, age) VALUES (3, 'Carol', 22)");
+    // Show table after attempted violations
+    println!("\n-- SQL SELECT after constraint tests --");
+    execute_sql(&mut my_database, "SELECT * FROM Users WHERE id >= 0");
 
-    println!("\n-- SQL-like UPDATE --");
-    execute_sql(&mut my_database, "UPDATE Users SET age = 40 WHERE id == 2");
+    // Attempt to update to duplicate primary key
+    println!("\n-- SQL UPDATE to duplicate PRIMARY KEY (should fail) --");
+    execute_sql(&mut my_database, "UPDATE Users SET id = 2 WHERE id == 1");
 
-    println!("\n-- SQL-like DELETE --");
-    execute_sql(&mut my_database, "DELETE FROM Users WHERE name == 'Alice'");
+    // Attempt to update to duplicate unique column
+    println!("\n-- SQL UPDATE to duplicate UNIQUE (should fail) --");
+    execute_sql(&mut my_database, "UPDATE Users SET email = 'bob@example.com' WHERE id == 1");
 
-    println!("\n-- SQL-like SELECT (after changes) --");
+    // Show table after attempted update violations
+    println!("\n-- SQL SELECT after update constraint tests --");
     execute_sql(&mut my_database, "SELECT * FROM Users WHERE id >= 0");
 }

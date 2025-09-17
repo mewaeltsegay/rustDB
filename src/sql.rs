@@ -1,3 +1,37 @@
+fn parse_create_table(sql: &str) -> (String, Vec<String>, Option<String>, Vec<String>) {
+    // Example: CREATE TABLE Users (id PRIMARY KEY, name, email UNIQUE, age)
+    let sql = sql.trim_end_matches(';');
+    let upper = sql.to_uppercase();
+    let mut table = String::new();
+    let mut columns = vec![];
+    let mut primary_key = None;
+    let mut unique_columns = vec![];
+    if let Some(table_idx) = upper.find("TABLE ") {
+        let after_table = &sql[table_idx + 6..];
+        if let Some(paren_idx) = after_table.find('(') {
+            table = after_table[..paren_idx].trim().to_string();
+            if let Some(end_paren_idx) = after_table.find(')') {
+                let cols_str = &after_table[paren_idx + 1..end_paren_idx];
+                for col_def in cols_str.split(',') {
+                    let col_def = col_def.trim();
+                    let parts: Vec<&str> = col_def.split_whitespace().collect();
+                    if !parts.is_empty() {
+                        let col_name = parts[0].to_string();
+                        columns.push(col_name.clone());
+                        if parts.len() > 1 {
+                            if parts[1].to_uppercase() == "PRIMARY" && parts.get(2).map(|s| s.to_uppercase()) == Some("KEY".to_string()) {
+                                primary_key = Some(col_name.clone());
+                            } else if parts[1].to_uppercase() == "UNIQUE" {
+                                unique_columns.push(col_name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (table, columns, primary_key, unique_columns)
+}
 // sql.rs
 // Minimal SQL-like query parser and dispatcher for CRUD operations
 
@@ -7,7 +41,11 @@ use crate::query::query_to_predicate;
 /// Dispatches a SQL-like query string to the appropriate database operation.
 pub fn execute_sql(db: &mut Database, sql: &str) {
     let sql = sql.trim();
-    if sql.to_uppercase().starts_with("SELECT") {
+    if sql.to_uppercase().starts_with("CREATE TABLE") {
+        // Example: CREATE TABLE Users (id PRIMARY KEY, name, email UNIQUE, age)
+        let (table, columns, primary_key, unique_columns) = parse_create_table(sql);
+        db.create_table_with_constraints(&table, columns, primary_key, unique_columns);
+    } else if sql.to_uppercase().starts_with("SELECT") {
         // Example: SELECT * FROM Users WHERE age > 25
         let (columns, table, where_clause) = parse_select(sql);
         let table_columns = db.get_table_columns(&table);
