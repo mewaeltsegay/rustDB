@@ -4,12 +4,15 @@
 pub trait TableInterface {
     /// Adds a new row to the table with the given values.
     fn add_row(&mut self, values: Vec<String>);
-    /// Updates the row at the specified index with new values.
-    fn update_row(&mut self, row_index: usize, set_values: Vec<String>);
-    /// Deletes the row at the specified index.
-    fn delete_row(&mut self, row_index: usize);
-    /// Selects and returns the values of the row at the specified index, if it exists.
-    fn select_row(&self, row_index: usize) -> Option<Vec<String>>;
+    /// Updates all rows matching the predicate with new values.
+    fn update_rows<F>(&mut self, set_values: Vec<String>, predicate: F)
+    where F: Fn(&Vec<String>) -> bool;
+    /// Deletes all rows matching the predicate.
+    fn delete_rows<F>(&mut self, predicate: F)
+    where F: Fn(&Vec<String>) -> bool;
+    /// Selects and returns all rows matching the predicate.
+    fn select_rows<F>(&self, predicate: F) -> Vec<Vec<String>>
+    where F: Fn(&Vec<String>) -> bool;
 }
 
 use crate::row::{Row, RowInterface};
@@ -18,7 +21,7 @@ use crate::row::{Row, RowInterface};
 /// Stores the table's name, columns, and rows.
 pub struct Table {
     name: String,      // Name of the table
-    columns: Vec<String>, // Column names
+    pub columns: Vec<String>, // Column names
     rows: Vec<Box<dyn RowInterface>>, // Rows in the table
 }
 
@@ -41,26 +44,29 @@ impl TableInterface for Table {
         self.rows.push(row);
     }
 
-    /// Updates the row at the specified index with new values.
-    fn update_row(&mut self, row_index: usize, set_values: Vec<String>) {
-        if row_index < self.rows.len() {
-            self.rows[row_index].set_values(set_values);
+    /// Updates all rows matching the predicate with new values.
+    fn update_rows<F>(&mut self, set_values: Vec<String>, predicate: F)
+    where F: Fn(&Vec<String>) -> bool {
+        for row in &mut self.rows {
+            if predicate(row.get_values()) {
+                row.set_values(set_values.clone());
+            }
         }
     }
 
-    /// Deletes the row at the specified index.
-    fn delete_row(&mut self, row_index: usize) {
-        if row_index < self.rows.len() {
-            self.rows.remove(row_index);
-        }
+    /// Deletes all rows matching the predicate.
+    fn delete_rows<F>(&mut self, predicate: F)
+    where F: Fn(&Vec<String>) -> bool {
+        self.rows.retain(|row| !predicate(row.get_values()));
     }
 
-    /// Selects and returns the values of the row at the specified index, if it exists.
-    fn select_row(&self, row_index: usize) -> Option<Vec<String>> {
-        if row_index < self.rows.len() {
-            Some(self.rows[row_index].get_values().clone())
-        } else {
-            None
-        }
+    /// Selects and returns all rows matching the predicate.
+    fn select_rows<F>(&self, predicate: F) -> Vec<Vec<String>>
+    where F: Fn(&Vec<String>) -> bool {
+        self.rows
+            .iter()
+            .filter(|row| predicate(row.get_values()))
+            .map(|row| row.get_values().clone())
+            .collect()
     }
 }

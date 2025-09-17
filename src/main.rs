@@ -1,3 +1,7 @@
+mod query;
+mod sql;
+use query::query_to_predicate;
+use sql::execute_sql;
 // main.rs
 mod database;
 mod table;
@@ -17,15 +21,20 @@ fn main() {
     my_database.insert("Users", vec!["1".to_string(), "Alice".to_string(), "30".to_string()]);
     my_database.insert("Users", vec!["2".to_string(), "Bob".to_string(), "25".to_string()]);
 
-    // Select from the table (print all rows)
-    my_database.select("Users", vec!["id".to_string(), "name".to_string(), "age".to_string()], "");
 
-    // Update a row (set "age" to "31" for the first row)
-    my_database.update("Users", vec!["1".to_string(), "Alice".to_string(), "31".to_string()], "");
+    // --- SQL-like query examples ---
+    println!("\n-- SQL-like SELECT --");
+    execute_sql(&mut my_database, "SELECT * FROM Users WHERE age > 25");
 
-    // Delete a row (delete the first row)
-    my_database.delete("Users", "");
+    println!("\n-- SQL-like INSERT --");
+    execute_sql(&mut my_database, "INSERT INTO Users (id, name, age) VALUES (3, 'Carol', 22)");
 
-    // Select again to see changes
-    my_database.select("Users", vec!["id".to_string(), "name".to_string(), "age".to_string()], "");
+    println!("\n-- SQL-like UPDATE --");
+    execute_sql(&mut my_database, "UPDATE Users SET age = 40 WHERE id == 2");
+
+    println!("\n-- SQL-like DELETE --");
+    execute_sql(&mut my_database, "DELETE FROM Users WHERE name == 'Alice'");
+
+    println!("\n-- SQL-like SELECT (after changes) --");
+    execute_sql(&mut my_database, "SELECT * FROM Users WHERE id >= 0");
 }
