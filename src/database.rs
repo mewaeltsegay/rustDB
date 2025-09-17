@@ -1,13 +1,6 @@
-impl Database {
-    /// Create a table with constraints (primary key and unique columns)
-    pub fn create_table_with_constraints(&mut self, table_name: &str, columns: Vec<String>, primary_key: Option<String>, unique_columns: Vec<String>) {
-        let table = Table::new(table_name.to_string(), columns, primary_key, unique_columns);
-        self.tables.insert(table_name.to_string(), table);
-        println!("Created table: {}", table_name);
-    }
-}
 // database.rs
 pub trait DatabaseInterface {
+    fn create_table_with_constraints(&mut self, table_name: &str, columns: Vec<String>, primary_key: Option<String>, unique_columns: Vec<String>);
     fn create_table(&mut self, table_name: &str, columns: Vec<String>);
     fn insert(&mut self, table_name: &str, values: Vec<String>);
     /// Updates all rows matching the predicate with new values.
@@ -46,6 +39,13 @@ impl Database {
 }
 
 impl DatabaseInterface for Database {
+    /// Create a table with constraints (primary key and unique columns)
+    fn create_table_with_constraints(&mut self, table_name: &str, columns: Vec<String>, primary_key: Option<String>, unique_columns: Vec<String>) {
+        let table = Table::new(table_name.to_string(), columns, primary_key, unique_columns);
+        self.tables.insert(table_name.to_string(), table);
+        println!("Created table: {}", table_name);
+    }
+
     fn create_table(&mut self, table_name: &str, columns: Vec<String>) {
         let table = Table::new(table_name.to_string(), columns, None, vec![]);
         self.tables.insert(table_name.to_string(), table);
