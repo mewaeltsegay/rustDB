@@ -4,7 +4,7 @@ mod database;
 mod table;
 mod row;
 
-use database::{Database, DatabaseInterface};
+use database::Database;
 use sql::execute_sql;
 fn main() {
     // Create a new database
@@ -42,4 +42,22 @@ fn main() {
     // Show table after attempted update violations
     println!("\n-- SQL SELECT after update constraint tests --");
     execute_sql(&mut my_database, "SELECT * FROM Users WHERE id >= 0");
+
+    // --- Save database to file ---
+    println!("\n-- Saving database to file: db_save.json --");
+    if let Err(e) = my_database.save_to_file("db_save.json") {
+        println!("Failed to save database: {}", e);
+    } else {
+        println!("Database saved successfully.");
+    }
+
+    // --- Load database from file ---
+    println!("\n-- Loading database from file: db_save.json --");
+    match Database::load_from_file("db_save.json") {
+        Ok(loaded_db) => {
+            println!("Database loaded successfully. Displaying loaded data:");
+            execute_sql(&mut loaded_db.clone(), "SELECT * FROM Users WHERE id >= 0");
+        },
+        Err(e) => println!("Failed to load database: {}", e),
+    }
 }

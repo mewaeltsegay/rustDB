@@ -1,3 +1,6 @@
+use serde::{Serialize, Deserialize};
+use std::fs::File;
+use std::io::{Write, Read};
 // database.rs
 pub trait DatabaseInterface {
     fn create_table_with_constraints(&mut self, table_name: &str, columns: Vec<String>, primary_key: Option<String>, unique_columns: Vec<String>);
@@ -18,6 +21,7 @@ use std::collections::HashMap;
 use crate::table::{Table, TableInterface};
 
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Database {
     pub tables: HashMap<String, Table>,
 }
@@ -35,6 +39,23 @@ impl Database {
         Database {
             tables: HashMap::new(),
         }
+    }
+
+    /// Save the database to a file as JSON
+    pub fn save_to_file(&self, path: &str) -> std::io::Result<()> {
+        let json = serde_json::to_string_pretty(self).unwrap();
+        let mut file = File::create(path)?;
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+
+    /// Load the database from a file (JSON)
+    pub fn load_from_file(path: &str) -> std::io::Result<Self> {
+        let mut file = File::open(path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        let db: Database = serde_json::from_str(&contents).unwrap();
+        Ok(db)
     }
 }
 

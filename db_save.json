@@ -1,0 +1,32 @@
+{
+  "tables": {
+    "Users": {
+      "name": "Users",
+      "columns": [
+        "id",
+        "name",
+        "email",
+        "age"
+      ],
+      "rows": [
+        {
+          "values": [
+            "bob@example.com"
+          ]
+        },
+        {
+          "values": [
+            "2",
+            "Bob",
+            "bob@example.com",
+            "25"
+          ]
+        }
+      ],
+      "primary_key": "id",
+      "unique_columns": [
+        "email"
+      ]
+    }
+  }
+}

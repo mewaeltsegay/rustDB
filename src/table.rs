@@ -1,3 +1,4 @@
+use serde::{Serialize, Deserialize};
 // table.rs
 /// Trait defining the interface for a table.
 /// Provides methods to add, update, delete, and select rows.
@@ -19,10 +20,11 @@ use crate::row::{Row, RowInterface};
 
 /// Struct representing a table in the database.
 /// Stores the table's name, columns, and rows.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Table {
     name: String,      // Name of the table
     pub columns: Vec<String>, // Column names
-    rows: Vec<Box<dyn RowInterface>>, // Rows in the table
+    rows: Vec<Row>, // Rows in the table (for serialization, use Row directly)
     pub primary_key: Option<String>, // Single-column primary key
     pub unique_columns: Vec<String>, // Unique columns
 }
@@ -79,8 +81,8 @@ impl TableInterface for Table {
                 }
             }
         }
-        let row = Box::new(Row::new(values));
-        self.rows.push(row);
+    let row = Row::new(values);
+    self.rows.push(row);
     }
 
     /// Updates all rows matching the predicate with new values, enforcing primary key and unique constraints.

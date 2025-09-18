@@ -1,3 +1,4 @@
+use serde::{Serialize, Deserialize};
 // row.rs
 
 /// Trait defining the interface for a row in a table.
@@ -11,6 +12,7 @@ pub trait RowInterface {
 
 /// Struct representing a single row in a table.
 /// Stores the values for each column as a vector of strings.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Row {
     values: Vec<String>,
 }
