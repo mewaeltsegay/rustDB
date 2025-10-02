@@ -1,0 +1,369 @@
+use crate::schema::{ColumnSchema, ColumnType};
+
+fn parse_create_table(sql: &str) -> (String, Vec<ColumnSchema>, Option<String>, Vec<String>) {
+    // Example: CREATE TABLE Users (id PRIMARY KEY, name, email UNIQUE, age)
+    let sql = sql.trim_end_matches(';');
+    let upper = sql.to_uppercase();
+    let mut table = String::new();
+    let mut columns: Vec<ColumnSchema> = vec![];
+    let mut primary_key = None;
+    let mut unique_columns = vec![];
+
+    // Must start with CREATE TABLE and have both parentheses
+    if !upper.starts_with("CREATE TABLE") || 
+       !sql.contains('(') || 
+       !sql.contains(')') {
+        return (table, columns, primary_key, unique_columns);
+    }
+
+    if let Some(table_idx) = upper.find("TABLE ") {
+        let after_table = &sql[table_idx + 6..];
+        if let Some(paren_idx) = after_table.find('(') {
+            let table_name = after_table[..paren_idx].trim().to_string();
+            if table_name.is_empty() {
+                return (table, columns, primary_key, unique_columns);
+            }
+            table = table_name;
+            
+            if let Some(end_paren_idx) = after_table.find(')') {
+                if paren_idx >= end_paren_idx {
+                    return (table, columns, primary_key, unique_columns);
+                }
+                let cols_str = &after_table[paren_idx + 1..end_paren_idx];
+                for col_def in cols_str.split(',') {
+                    let col_def = col_def.trim();
+                    let parts: Vec<&str> = col_def.split_whitespace().collect();
+                    if !parts.is_empty() {
+                        let col_name = parts[0].to_string();
+                        // default type
+                        let mut col_type = ColumnType::String;
+                        // detect tokens for type and constraints (order may vary)
+                        let mut i = 1;
+                        while i < parts.len() {
+                            let token = parts[i].to_uppercase();
+                            match token.as_str() {
+                                "INT" | "INTEGER" => {
+                                    col_type = ColumnType::Int;
+                                }
+                                "FLOAT" | "REAL" | "DOUBLE" => {
+                                    col_type = ColumnType::Float;
+                                }
+                                "STRING" | "TEXT" | "CHAR" => {
+                                    col_type = ColumnType::String;
+                                }
+                                "PRIMARY" => {
+                                    // check next token for KEY
+                                    if parts.get(i + 1).map(|s| s.to_uppercase())
+                                        == Some("KEY".to_string())
+                                    {
+                                        primary_key = Some(col_name.clone());
+                                        i += 1; // skip KEY
+                                    }
+                                }
+                                "KEY" => { /* handled with PRIMARY before */ }
+                                "UNIQUE" => {
+                                    unique_columns.push(col_name.clone());
+                                }
+                                _ => { /* unknown token, ignore */ }
+                            }
+                            i += 1;
+                        }
+                        columns.push(ColumnSchema {
+                            name: col_name.clone(),
+                            col_type,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    (table, columns, primary_key, unique_columns)
+}
+// sql.rs
+// Minimal SQL-like query parser and dispatcher for CRUD operations
+
+use crate::database::{Database, DatabaseInterface};
+use crate::query::query_to_predicate;
+
+/// Dispatches a SQL-like query string to the appropriate database operation.
+pub fn execute_sql(db: &mut Database, sql: &str) {
+    let sql = sql.trim();
+    if sql.to_uppercase().starts_with("CREATE TABLE") {
+        // Example: CREATE TABLE Users (id PRIMARY KEY, name, email UNIQUE, age)
+        let (table, columns, primary_key, unique_columns) = parse_create_table(sql);
+        if table.is_empty() || columns.is_empty() {
+            println!("Invalid CREATE TABLE syntax - table name and at least one column required");
+            return;
+        }
+        db.create_table_with_constraints(&table, columns, primary_key, unique_columns);
+    } else if sql.to_uppercase().starts_with("SELECT") {
+        // Example: SELECT * FROM Users WHERE age > 25
+        let (columns, table, where_clause) = parse_select(sql);
+        
+        // Validate table exists
+        if table.is_empty() || !db.tables.contains_key(&table) {
+            println!("Table '{}' does not exist", table);
+            return;
+        }
+
+        let _table_columns = db.get_table_columns(&table);
+        let selected_columns = if columns == ["*"] {
+            _table_columns.clone()
+        } else if columns.is_empty() {
+            println!("No columns specified in SELECT");
+            return;
+        } else {
+            columns
+        };
+        
+        let table_schema_cols = db.tables.get(&table).unwrap().schema.columns.clone();
+        let pred = query_to_predicate(&table_schema_cols, &where_clause);
+        db.select(&table, selected_columns, pred);
+    } else if sql.to_uppercase().starts_with("INSERT") {
+        // Example: INSERT INTO Users (id, name, age) VALUES (3, 'Carol', 22)
+        let (table, values) = parse_insert(sql);
+        
+        // Validate table and values
+        if table.is_empty() {
+            println!("No table specified in INSERT");
+            return;
+        }
+        if !db.tables.contains_key(&table) {
+            println!("Table '{}' does not exist", table);
+            return;
+        }
+        if values.is_empty() {
+            println!("No values specified in INSERT");
+            return;
+        }
+        
+        // Validate column count
+        let expected_cols = db.tables.get(&table).unwrap().schema.columns.len();
+        if values.len() != expected_cols {
+            println!(
+                "Wrong number of values: expected {}, got {}",
+                expected_cols,
+                values.len()
+            );
+            return;
+        }
+        
+        db.insert(&table, values);
+    } else if sql.to_uppercase().starts_with("UPDATE") {
+        // Example: UPDATE Users SET age = 40 WHERE id == 2
+        let (table, set_values, where_clause) = parse_update(sql, db);
+        
+        // Validate table
+        if table.is_empty() {
+            println!("No table specified in UPDATE");
+            return;
+        }
+        if !db.tables.contains_key(&table) {
+            println!("Table '{}' does not exist", table);
+            return;
+        }
+        
+        let table_ref = db.tables.get(&table).unwrap();
+        let table_schema_cols = table_ref.schema.columns.clone();
+        
+        // Validate set values
+        if set_values.iter().all(|v| v.is_empty()) {
+            println!("No values specified in UPDATE SET clause");
+            return;
+        }
+        
+        if set_values.len() != table_schema_cols.len() {
+            println!(
+                "Wrong number of values in UPDATE: expected {}, got {}",
+                table_schema_cols.len(),
+                set_values.len()
+            );
+            return;
+        }
+        
+        let pred = query_to_predicate(&table_schema_cols, &where_clause);
+        db.update(&table, set_values, pred);
+    } else if sql.to_uppercase().starts_with("DELETE") {
+        // Example: DELETE FROM Users WHERE id == 2
+        let (table, where_clause) = parse_delete(sql);
+        let _table_columns = db.get_table_columns(&table);
+        let table_schema_cols: Vec<_> = if let Some(t) = db.tables.get(&table) {
+            t.schema.columns.clone()
+        } else {
+            vec![]
+        };
+        let pred = query_to_predicate(&table_schema_cols, &where_clause);
+        db.delete(&table, pred);
+    } else if sql.to_uppercase().starts_with("LIST") {
+        let tables = parse_tables(db, sql);
+        db.list_tables(&tables);
+    } else {
+        println!("Unsupported SQL operation.");
+    }
+}
+
+fn parse_tables(db: &Database, sql: &str) -> Vec<String> {
+    // LIST TABLES
+    let sql = sql.trim_end_matches(';');
+    let upper = sql.to_uppercase();
+    let mut tables = vec![];
+
+    if upper == "LIST TABLES" {
+        // No specific tables to parse, just return empty vector
+        tables = db.tables.keys().cloned().collect::<Vec<String>>();
+    }
+    tables
+}
+
+// Helper functions for parsing SQL-like queries (very basic, not robust)
+fn parse_select(sql: &str) -> (Vec<String>, String, String) {
+    // SELECT col1, col2 FROM table WHERE condition
+    let mut columns = vec![];
+    let mut table = String::new();
+    let mut where_clause = String::new();
+    let sql = sql.trim_end_matches(';');
+    let upper = sql.to_uppercase();
+    
+    // Must start with SELECT and have FROM
+    if !upper.starts_with("SELECT") || !upper.contains("FROM") {
+        return (columns, table, where_clause);
+    }
+    
+    if let Some(select_idx) = upper.find("SELECT ") {
+        if let Some(from_idx) = upper.find(" FROM ") {
+            // Safely get columns between SELECT and FROM
+            if from_idx > select_idx + 7 {
+                let cols = &sql[select_idx + 7..from_idx];
+                columns = cols.split(',').map(|s| s.trim().to_string()).collect();
+            }
+            
+            // Safely get table name after FROM and optional WHERE clause
+            let after_from = &sql[from_idx + 6..];
+            if !after_from.is_empty() {
+                if let Some(where_idx) = after_from.to_uppercase().find(" WHERE ") {
+                    table = after_from[..where_idx].trim().to_string();
+                    where_clause = after_from[where_idx + 7..].trim().to_string();
+                    if where_clause.is_empty() {
+                        where_clause = "true".to_string();
+                    }
+                } else {
+                    table = after_from.trim().to_string();
+                    where_clause = "".to_string(); // Empty string will be treated as true
+                }
+            }
+        }
+    }
+    (columns, table, where_clause)
+}
+
+fn parse_insert(sql: &str) -> (String, Vec<String>) {
+    // INSERT INTO table (col1, col2) VALUES (val1, val2)
+    let sql = sql.trim_end_matches(';');
+    let upper = sql.to_uppercase();
+    let mut table = String::new();
+    let mut values = vec![];
+    
+    // Must start with INSERT INTO and have VALUES
+    if !upper.starts_with("INSERT INTO") || !upper.contains("VALUES") {
+        return (table, values);
+    }
+    
+    if let Some(into_idx) = upper.find("INTO ") {
+        let after_into = &sql[into_idx + 5..];
+        // Handle both formats:
+        // INSERT INTO table VALUES (...)
+        // INSERT INTO table (col1, col2) VALUES (...)
+        // Find VALUES first to get table name (handle both with/without column list)
+        if let Some(values_idx) = after_into.to_uppercase().find("VALUES") {
+            table = after_into[..values_idx].trim().to_string();
+            // If there's a column list, strip it from table name
+            if let Some(paren_start) = table.find('(') {
+                table = table[..paren_start].trim().to_string();
+            }
+
+            // Now get values from within parentheses after VALUES
+            if let Some(vals_idx) = after_into[values_idx..].find('(') {
+                let vals_start = values_idx + vals_idx + 1;
+                if let Some(vals_end) = after_into[vals_start..].find(')') {
+                    let vals_str = &after_into[vals_start..vals_start + vals_end];
+                    values = vals_str
+                        .split(',')
+                        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                        .collect();
+                }
+            }
+        }
+    }
+    (table, values)
+}
+
+fn parse_update(sql: &str, db: &Database) -> (String, Vec<String>, String) {
+    // UPDATE table SET col1 = val1, col2 = val2 WHERE condition
+    let sql = sql.trim_end_matches(';');
+    let upper = sql.to_uppercase();
+    let mut table = String::new();
+    let mut set_values = vec![];
+    let mut where_clause = String::new();
+    if let Some(update_idx) = upper.find("UPDATE ") {
+        let after_update = &sql[update_idx + 7..];
+        if let Some(set_idx) = after_update.to_uppercase().find(" SET ") {
+            table = after_update[..set_idx].trim().to_string();
+            let after_set = &after_update[set_idx + 5..];
+            let mut col_map = std::collections::HashMap::new();
+
+            // Split the SET clause into column/value pairs
+            let set_part = if let Some(where_idx) = after_set.to_uppercase().find(" WHERE ") {
+                let set_str = &after_set[..where_idx];
+                where_clause = after_set[where_idx + 7..].trim().to_string();
+                set_str
+            } else {
+                after_set
+            };
+
+            // Parse column=value pairs
+            for pair in set_part.split(',') {
+                let parts: Vec<&str> = pair.split('=').map(|s| s.trim()).collect();
+                if parts.len() == 2 {
+                    let col = parts[0].trim().to_string();
+                    let val = parts[1]
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_string();
+                    col_map.insert(col, val);
+                }
+            }
+
+            // Get all columns in order for this table
+            if let Some(table_ref) = db.tables.get(&table) {
+                let columns = &table_ref.schema.columns;
+                // Create set_values in correct column order
+                set_values = columns
+                    .iter()
+                    .map(|col| col_map.get(&col.name).cloned().unwrap_or_default())
+                    .collect();
+            }
+        }
+    }
+    (table, set_values, where_clause)
+}
+
+fn parse_delete(sql: &str) -> (String, String) {
+    // DELETE FROM table WHERE condition
+    let sql = sql.trim_end_matches(';');
+    let upper = sql.to_uppercase();
+    let mut table = String::new();
+    let mut where_clause = String::new();
+    if let Some(from_idx) = upper.find("FROM ") {
+        let after_from = &sql[from_idx + 5..];
+        if let Some(where_idx) = after_from.to_uppercase().find(" WHERE ") {
+            table = after_from[..where_idx].trim().to_string();
+            where_clause = after_from[where_idx + 7..].trim().to_string();
+        } else {
+            table = after_from.trim().to_string();
+        }
+    }
+    (table, where_clause)
+}
+
+// tests moved to tests/integration_tests.rs
