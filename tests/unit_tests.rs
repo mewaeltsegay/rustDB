@@ -99,3 +99,55 @@ fn table_constraints_unit() {
     db.insert("Utest", vec!["1".to_string(), "C".to_string()]);
     assert_eq!(db.tables.get("Utest").unwrap().rows.len(), 2);
 }
+
+#[test]
+fn select_operations_unit() {
+    let mut db = Database::new();
+    
+    // Create a test table with different data types
+    execute_sql(
+        &mut db,
+        "CREATE TABLE Products (id INT PRIMARY KEY, name STRING, price FLOAT, stock INT);",
+    );
+    
+    // Insert test data
+    execute_sql(&mut db, "INSERT INTO Products VALUES (1, 'Pen', 2.5, 100);");
+    execute_sql(&mut db, "INSERT INTO Products VALUES (2, 'Pencil', 1.2, 50);");
+    execute_sql(&mut db, "INSERT INTO Products VALUES (3, 'Eraser', 0.8, 30);");
+    
+    // Test 1: Basic SELECT * without WHERE clause
+    execute_sql(&mut db, "SELECT * FROM Products");
+    let products = db.tables.get("Products").unwrap();
+    assert_eq!(products.rows.len(), 3);
+    
+    // Test 2: SELECT with specific columns
+    execute_sql(&mut db, "SELECT id, name FROM Products");
+    
+    // Test 3: SELECT with WHERE clause on different data types
+    // Integer comparison
+    execute_sql(&mut db, "SELECT * FROM Products WHERE id > 1");
+    execute_sql(&mut db, "SELECT * FROM Products WHERE stock <= 50");
+    
+    // Float comparison
+    execute_sql(&mut db, "SELECT * FROM Products WHERE price > 2.0");
+    
+    // String comparison
+    execute_sql(&mut db, "SELECT * FROM Products WHERE name == 'Pen'");
+    
+    // Test 4: SELECT with invalid table (should not panic)
+    execute_sql(&mut db, "SELECT * FROM NonExistentTable");
+    
+    // Test 5: SELECT with complex WHERE conditions
+    execute_sql(&mut db, "SELECT * FROM Products WHERE price > 1.0");
+    let products = db.tables.get("Products").unwrap();
+    let expensive_products = products.rows.iter()
+        .filter(|row| row.get_values()[2].parse::<f64>().unwrap() > 1.0)
+        .count();
+    assert_eq!(expensive_products, 2); // Pen and Pencil are > 1.0
+    
+    // Test 6: SELECT with no matching rows
+    execute_sql(&mut db, "SELECT * FROM Products WHERE price > 10.0");
+    
+    // Test 7: SELECT with invalid column in WHERE clause (should not panic)
+    execute_sql(&mut db, "SELECT * FROM Products WHERE invalid_column > 10");
+}
