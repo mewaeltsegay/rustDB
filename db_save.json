@@ -1,0 +1,84 @@
+{
+  "tables": {
+    "Users": {
+      "name": "Users",
+      "schema": {
+        "columns": [
+          {
+            "name": "id",
+            "col_type": "String"
+          },
+          {
+            "name": "name",
+            "col_type": "String"
+          },
+          {
+            "name": "email",
+            "col_type": "String"
+          },
+          {
+            "name": "age",
+            "col_type": "String"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "values": [
+            "1",
+            "Alice",
+            "alice@example.com",
+            "30"
+          ]
+        },
+        {
+          "values": [
+            "2",
+            "Bob",
+            "bob@example.com",
+            "25"
+          ]
+        }
+      ],
+      "primary_key": "id",
+      "unique_columns": [
+        "email"
+      ]
+    },
+    "Products": {
+      "name": "Products",
+      "schema": {
+        "columns": [
+          {
+            "name": "id",
+            "col_type": "Int"
+          },
+          {
+            "name": "name",
+            "col_type": "String"
+          },
+          {
+            "name": "price",
+            "col_type": "Float"
+          },
+          {
+            "name": "stock",
+            "col_type": "Int"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "values": [
+            "1",
+            "Pen",
+            "3.0",
+            "100"
+          ]
+        }
+      ],
+      "primary_key": "id",
+      "unique_columns": []
+    }
+  }
+}
