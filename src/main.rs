@@ -36,14 +36,17 @@ fn init_demo_database() -> Database {
     db
 }
 
-fn main() {
-    let mut db = init_demo_database();
-    println!("Welcome to RustDB. Type 'exit' or 'quit' to leave.");
+mod server;
+mod client;
+mod replication;
 
-    println!("Welcome to RustDB. Type 'exit' or 'quit' to leave.");
+use crate::replication::ReplicationConfig;
+
+fn run_cli_mode() {
+    let mut db = init_demo_database();
+    println!("Welcome to RustDB CLI mode. Type 'exit' or 'quit' to leave.");
 
     loop {
-        // parse input from user
         let mut input = String::new();
         print!("rustdb> ");
         std::io::stdout().flush().unwrap();
@@ -58,5 +61,76 @@ fn main() {
         if !input.is_empty() {
             execute_sql(&mut db, input);
         }
+    }
+}
+
+fn main() {
+    // Parse command line arguments
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--server" => {
+                let mut arg_iter = args.iter().skip(2);
+                let mut port = 3030;
+                let mut is_replica = false;
+                let mut primary_url = None;
+
+                while let Some(arg) = arg_iter.next() {
+                    match arg.as_str() {
+                        "--port" => {
+                            if let Some(p) = arg_iter.next() {
+                                port = p.parse().unwrap_or(3030);
+                            }
+                        }
+                        "--replica" => {
+                            is_replica = true;
+                        }
+                        "--primary-url" => {
+                            if let Some(url) = arg_iter.next() {
+                                primary_url = Some(url.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                let config = if is_replica {
+                    if let Some(primary) = primary_url {
+                        println!("Starting RustDB in replica mode...");
+                        Some(ReplicationConfig::new_replica(primary))
+                    } else {
+                        eprintln!("Error: --primary-url is required for replica servers");
+                        std::process::exit(1);
+                    }
+                } else {
+                    println!("Starting RustDB in primary mode...");
+                    Some(ReplicationConfig::new_primary())
+                };
+
+                let server = server::start_server(port, config);
+                println!("RustDB RPC Server running on http://127.0.0.1:{}", port);
+                if is_replica {
+                    println!("Syncing with primary server...");
+                }
+                server.wait();
+            }
+            "--client" => {
+                println!("Starting RustDB in client mode...");
+                match client::run_client_example() {
+                    Ok(_) => println!("Client operations completed successfully"),
+                    Err(e) => eprintln!("Client error: {}", e),
+                }
+            }
+            _ => {
+                println!("Unknown option: {}", args[1]);
+                println!("Usage:");
+                println!("  cargo run                                                    # Run in CLI mode");
+                println!("  cargo run -- --server [--port <port>]                       # Run in primary server mode");
+                println!("  cargo run -- --server --replica --primary-url <url> [--port <port>] # Run in replica mode");
+                println!("  cargo run -- --client                                       # Run in client mode");
+            }
+        }
+    } else {
+        run_cli_mode();
     }
 }
