@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use crate::row::RowInterface;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicationConfig {
@@ -73,24 +74,54 @@ impl ReplicationManager {
                     .as_secs(),
                 query,
             };
-            self.events.lock().unwrap().push(event);
-            self.propagate_to_replicas();
+
+            // Push event into local store, recovering if mutex was poisoned
+            {
+                let mut events_lock = self.events.lock().unwrap_or_else(|p| p.into_inner());
+                events_lock.push(event.clone());
+            }
+
+            // Spawn a background thread to propagate this event to replicas so we don't
+            // create/drop blocking runtimes from within the HTTP worker thread.
+            let replicas: Vec<String> = self.config.replicas.iter().cloned().collect();
+            std::thread::spawn(move || {
+                if replicas.is_empty() {
+                    return;
+                }
+                let client = reqwest::blocking::Client::new();
+                let events_payload = vec![event];
+                for replica in &replicas {
+                    let _ = client
+                        .post(&format!("{}/replicate", replica))
+                        .json(&events_payload)
+                        .send();
+                }
+            });
         }
     }
 
     pub fn propagate_to_replicas(&self) {
+        // keep the original behavior for callers that want a full propagate,
+        // but ensure we don't panic on poisoned locks. This function is
+        // safe to call from a background thread.
         if !self.config.is_primary {
             return;
         }
 
-        let events = self.events.lock().unwrap().clone();
+        let events = self.events.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let client = reqwest::blocking::Client::new();
 
+        // Send events as a JSON-RPC call to each replica so we reuse the
+        // same RPC transport instead of raw HTTP endpoints.
+        let rpc_req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "replication_apply_events",
+            "params": [events],
+            "id": 1
+        });
+
         for replica in &self.config.replicas {
-            let _ = client
-                .post(&format!("{}/replicate", replica))
-                .json(&events)
-                .send();
+            let _ = client.post(replica).json(&rpc_req).send();
         }
     }
 
@@ -99,15 +130,15 @@ impl ReplicationManager {
             return Err("Cannot apply replication events to primary server".into());
         }
 
-        // Get current event count
-        let current_count = self.events.lock().unwrap().len();
+        // Get current event count (recover if mutex was poisoned)
+        let current_count = self.events.lock().unwrap_or_else(|p| p.into_inner()).len();
 
         // Only apply new events
         let new_events: Vec<_> = events.into_iter().skip(current_count).collect();
         
         if !new_events.is_empty() {
-            let mut db = self.db.lock().unwrap();
-            let mut events_lock = self.events.lock().unwrap();
+            let mut db = self.db.lock().unwrap_or_else(|p| p.into_inner());
+            let mut events_lock = self.events.lock().unwrap_or_else(|p| p.into_inner());
             
             for event in new_events {
                 // Apply the query to the database
@@ -138,19 +169,62 @@ impl ReplicationManager {
             loop {
                 std::thread::sleep(interval);
 
-                // Get events from primary
-                if let Ok(response) = client.get(&format!("{}/events", primary_url)).send() {
-                    if let Ok(new_events) = response.json::<Vec<ReplicationEvent>>() {
-                        let mut db_lock = db.lock().unwrap();
-                        let mut events_lock = events.lock().unwrap();
-                        let current_count = events_lock.len();
-                        
-                        // Apply new events to the database
-                        for event in new_events.iter().skip(current_count) {
-                            crate::sql::execute_sql(&mut db_lock, &event.query);
+                // Call primary via JSON-RPC to get events
+                let rpc_req = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "replication_get_events",
+                    "params": [],
+                    "id": 1
+                });
+
+                if let Ok(response) = client.post(&primary_url).json(&rpc_req).send() {
+                    if let Ok(rpc_res_val) = response.json::<serde_json::Value>() {
+                        if let Some(result) = rpc_res_val.get("result") {
+                            if let Ok(new_events) = serde_json::from_value::<Vec<ReplicationEvent>>(result.clone()) {
+                                let mut db_lock = db.lock().unwrap_or_else(|p| p.into_inner());
+                                let mut events_lock = events.lock().unwrap_or_else(|p| p.into_inner());
+                                let current_count = events_lock.len();
+
+                                // Apply new events to the database
+                                for event in new_events.iter().skip(current_count) {
+                                    crate::sql::execute_sql(&mut db_lock, &event.query);
+                                }
+
+                                events_lock.extend(new_events.into_iter().skip(current_count));
+                            }
                         }
-                        
-                        events_lock.extend(new_events.into_iter().skip(current_count));
+                    }
+                }
+            }
+        });
+    }
+
+    /// Start a background thread that periodically prints the current tables and rows
+    /// on replica nodes. This helps visually verify that replicas have the same content
+    /// as the primary in container logs.
+    pub fn start_display_task(&self) {
+        if self.config.is_primary {
+            return;
+        }
+
+        let db = self.db.clone();
+        let interval = self.config.sync_interval;
+
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(interval);
+
+                let db_lock = db.lock().unwrap_or_else(|p| p.into_inner());
+                println!("[replica] Current database snapshot:");
+                for (tname, table) in &db_lock.tables {
+                    println!("[replica] Table: {}", tname);
+                    // print schema header
+                    let headers: Vec<_> = table.schema.columns.iter().map(|c| c.name.clone()).collect();
+                    println!("[replica] Columns: {:?}", headers);
+                    // print rows
+                    for (i, row) in table.rows.iter().enumerate() {
+                        let vals = row.get_values().clone();
+                        println!("[replica]   row[{}]: {:?}", i, vals);
                     }
                 }
             }
@@ -158,10 +232,15 @@ impl ReplicationManager {
     }
 
     pub fn get_events(&self) -> Vec<ReplicationEvent> {
-        self.events.lock().unwrap().clone()
+        self.events.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     pub fn is_primary(&self) -> bool {
         self.config.is_primary
+    }
+
+    /// Add a replica URL to the primary configuration so future events are propagated.
+    pub fn add_replica(&mut self, url: String) {
+        self.config.replicas.insert(url);
     }
 }

@@ -88,7 +88,7 @@ impl RustDBClient {
 
 // Example usage in a binary
 pub fn run_client_example() -> std::result::Result<(), Box<dyn Error>> {
-    let client = RustDBClient::new("127.0.0.1", 3030);
+    let client = RustDBClient::new("127.0.0.1", 8000);
 
     // Test connection
     println!("Testing connection...");

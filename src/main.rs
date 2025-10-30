@@ -74,6 +74,7 @@ fn main() {
                 let mut port = 3030;
                 let mut is_replica = false;
                 let mut primary_url = None;
+                let mut replicas_arg: Option<String> = None;
 
                 while let Some(arg) = arg_iter.next() {
                     match arg.as_str() {
@@ -90,6 +91,11 @@ fn main() {
                                 primary_url = Some(url.to_string());
                             }
                         }
+                        "--replicas" => {
+                            if let Some(list) = arg_iter.next() {
+                                replicas_arg = Some(list.to_string());
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -104,7 +110,17 @@ fn main() {
                     }
                 } else {
                     println!("Starting RustDB in primary mode...");
-                    Some(ReplicationConfig::new_primary())
+                    let mut cfg = ReplicationConfig::new_primary();
+                    if let Some(list) = replicas_arg {
+                        // parse comma-separated list of replica URLs
+                        for r in list.split(',') {
+                            let url = r.trim().to_string();
+                            if !url.is_empty() {
+                                cfg.replicas.insert(url);
+                            }
+                        }
+                    }
+                    Some(cfg)
                 };
 
                 let server = server::start_server(port, config);
