@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  primary:
+    build: .
+    container_name: rustdb_primary
+    # Run primary server on port 8000
+    command: ["--server", "--port", "8000", "--replicas", "http://replica1:8001,http://replica2:8002"]
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  replica1:
+    build: .
+    container_name: rustdb_replica1
+    # Replica will connect to primary by service name `primary`
+    command: ["--server", "--replica", "--primary-url", "http://primary:8000", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    depends_on:
+      - primary
+    restart: unless-stopped
+
+  replica2:
+    build: .
+    container_name: rustdb_replica2
+    command: ["--server", "--replica", "--primary-url", "http://primary:8000", "--port", "8002"]
+    ports:
+      - "8002:8002"
+    depends_on:
+      - primary
+    restart: unless-stopped
+
+  client:
+    build: .
+    container_name: rustdb_client
+    # Run client example once the servers are up. It depends on primary to at least start.
+    command: ["--client"]
+    depends_on:
+      - primary
+      - replica1
+      - replica2
+    restart: "no"
