@@ -1,9 +1,20 @@
+/// Extract a shard key from a SQL query string (first integer found)
+fn extract_shard_key(query: &str) -> Option<u64> {
+    for token in query.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if let Ok(num) = token.parse::<u64>() {
+            return Some(num);
+        }
+    }
+    None
+}
+
 use jsonrpc_core::{Result, IoHandler};
 use jsonrpc_derive::rpc;
 use jsonrpc_http_server::ServerBuilder;
 use crate::database::Database;
 use crate::replication::{ReplicationConfig, ReplicationManager};
 use crate::row::RowInterface;
+use crate::sharding::ShardedDatabase;
 use std::sync::Arc;
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
@@ -44,12 +55,16 @@ pub trait Rpc {
 
 pub struct RpcServer {
     db: Arc<Mutex<Database>>,
+    sharded_db: Option<Arc<ShardedDatabase>>,
     replication_manager: Arc<Mutex<ReplicationManager>>,
 }
 
 impl RpcServer {
-    pub fn new(config: Option<ReplicationConfig>) -> Self {
+    pub fn new(config: Option<ReplicationConfig>, num_shards: Option<usize>) -> Self {
+        // If sharding is enabled, create sharded database
+        let sharded_db = num_shards.map(|n| Arc::new(ShardedDatabase::new(n)));
         let db = Arc::new(Mutex::new(Database::new()));
+        
         let replication_manager = Arc::new(Mutex::new(ReplicationManager::new(
             config.unwrap_or_else(|| ReplicationConfig::new_primary()),
             Arc::clone(&db),
@@ -68,6 +83,7 @@ impl RpcServer {
 
         RpcServer {
             db,
+            sharded_db,
             replication_manager,
         }
     }
@@ -92,11 +108,27 @@ impl Rpc for RpcServer {
             });
         }
 
-        let mut db = self.db.lock().unwrap_or_else(|p| p.into_inner());
-        // Execute the query and record for replication
-        crate::sql::execute_sql(&mut db, &query);
+        // Some operations (like CREATE TABLE) need to happen on all shards
+        if let Some(ref sharded_db) = self.sharded_db {
+            if query.to_uppercase().starts_with("CREATE TABLE") {
+                // Broadcast CREATE TABLE to all shards
+                for shard in sharded_db.get_all_shards() {
+                    let mut db = shard.db.lock().unwrap_or_else(|p| p.into_inner());
+                    crate::sql::execute_sql(&mut db, &query);
+                }
+            } else {
+                // Route other queries based on shard key
+                let key = extract_shard_key(&query).unwrap_or(0);
+                let shard = sharded_db.get_shard(&key);
+                let mut db = shard.db.lock().unwrap_or_else(|p| p.into_inner());
+                crate::sql::execute_sql(&mut db, &query);
+            }
+        } else {
+            let mut db = self.db.lock().unwrap_or_else(|p| p.into_inner());
+            crate::sql::execute_sql(&mut db, &query);
+        }
+
         repl.record_event(query);
-        
         Ok(QueryResponse {
             success: true,
             message: "Query executed successfully".to_string(),
@@ -167,8 +199,8 @@ impl Rpc for RpcServer {
     }
 }
 
-pub fn start_server(port: u16, config: Option<ReplicationConfig>) -> jsonrpc_http_server::Server {
-    let rpc = RpcServer::new(config);
+pub fn start_server(port: u16, config: Option<ReplicationConfig>, num_shards: Option<usize>) -> jsonrpc_http_server::Server {
+    let rpc = RpcServer::new(config, num_shards);
     let mut io = IoHandler::new();
     io.extend_with(rpc.to_delegate());
 

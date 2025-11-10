@@ -1,16 +1,15 @@
 use std::io::Write;
+extern crate lab;
 
-mod database;
-mod query;
-mod row;
-mod schema;
-mod sql;
-mod table;
-
-// use std::io::Stdin;
-
-use database::Database;
-use sql::execute_sql;
+use lab::{
+    database::Database,
+    sql::execute_sql,
+    replication::ReplicationConfig,
+    server,
+    client,
+};
+use tracing;
+use tracing_subscriber;
 
 fn init_demo_database() -> Database {
     let mut db = Database::new();
@@ -36,11 +35,15 @@ fn init_demo_database() -> Database {
     db
 }
 
-mod server;
-mod client;
-mod replication;
-
-use crate::replication::ReplicationConfig;
+fn init_logging() {
+    tracing_subscriber::fmt()
+        .with_env_filter("debug")
+        .with_thread_ids(true)
+        .with_target(false)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+}
 
 fn run_cli_mode() {
     let mut db = init_demo_database();
@@ -65,6 +68,15 @@ fn run_cli_mode() {
 }
 
 fn main() {
+    // Initialize logging with console output
+    tracing_subscriber::fmt()
+        .with_env_filter("debug")
+        .with_thread_ids(true)
+        .with_target(false)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
@@ -75,6 +87,7 @@ fn main() {
                 let mut is_replica = false;
                 let mut primary_url = None;
                 let mut replicas_arg: Option<String> = None;
+                let mut num_shards: Option<usize> = None;
 
                 while let Some(arg) = arg_iter.next() {
                     match arg.as_str() {
@@ -90,7 +103,12 @@ fn main() {
                             if let Some(url) = arg_iter.next() {
                                 primary_url = Some(url.to_string());
                             }
-                        }
+                        },
+                        "--shards" => {
+                            if let Some(n) = arg_iter.next() {
+                                num_shards = n.parse().ok();
+                            }
+                        },
                         "--replicas" => {
                             if let Some(list) = arg_iter.next() {
                                 replicas_arg = Some(list.to_string());
@@ -123,8 +141,11 @@ fn main() {
                     Some(cfg)
                 };
 
-                let server = server::start_server(port, config);
+                let server = server::start_server(port, config, num_shards);
                 println!("RustDB RPC Server running on http://127.0.0.1:{}", port);
+                if num_shards.is_some() {
+                    println!("Running in sharded mode with {} shards", num_shards.unwrap());
+                }
                 if is_replica {
                     println!("Syncing with primary server...");
                 }

@@ -7,6 +7,7 @@ pub mod table;
 pub mod server;
 pub mod client;
 pub mod replication;
+pub mod sharding;
 
 // Re-export commonly used types for tests and consumers
 pub use database::*;
@@ -15,3 +16,4 @@ pub use row::*;
 pub use schema::*;
 pub use sql::*;
 pub use table::*;
+pub use sharding::*;
