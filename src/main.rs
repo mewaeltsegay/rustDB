@@ -42,7 +42,8 @@ fn init_logging() {
         .with_target(false)
         .with_file(true)
         .with_line_number(true)
-        .init();
+    .try_init()
+    .ok();
 }
 
 fn run_cli_mode() {
@@ -68,14 +69,15 @@ fn run_cli_mode() {
 }
 
 fn main() {
-    // Initialize logging with console output
+    // Initialize logging with console output (non-panicking if already set)
     tracing_subscriber::fmt()
         .with_env_filter("debug")
         .with_thread_ids(true)
         .with_target(false)
         .with_file(true)
         .with_line_number(true)
-        .init();
+        .try_init()
+        .ok();
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();

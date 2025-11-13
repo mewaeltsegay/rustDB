@@ -88,14 +88,15 @@ impl RustDBClient {
 
 // Example usage in a binary
 pub fn run_client_example() -> std::result::Result<(), Box<dyn Error>> {
-    // Initialize logging
+    // Initialize logging (non-panicking if another subscriber already set)
     tracing_subscriber::fmt()
         .with_env_filter("debug")
         .with_target(false)
         .with_thread_ids(true)
         .with_file(true)
         .with_line_number(true)
-        .init();
+        .try_init()
+        .ok();
 
     let client = RustDBClient::new("127.0.0.1", 8000);
 
