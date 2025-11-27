@@ -217,54 +217,52 @@ impl ShardManager {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let hash = hasher.finish();
+        tracing::debug!(hash, "Finding shard for key");
 
-        tracing::debug!(
-            hash,
-            "Finding shard for key"
-        );
-
-        // Try to find a healthy shard that contains this hash
-        if let Some(shard) = self.shards
+        // Primary healthy case: the shard whose range contains the key and is healthy
+        if let Some(shard) = self
+            .shards
             .iter()
             .find(|shard| shard.contains_key(hash) && shard.is_healthy())
         {
             shard.record_access();
-            tracing::info!(
-                hash,
-                shard_id = shard.config.id,
-                "Key mapped to healthy shard"
-            );
+            tracing::info!(hash, shard_id = shard.config.id, "Key mapped to healthy shard");
             return shard.clone();
         }
 
-        // Primary is unhealthy; try replicas
-        if let Some(replica) = self.replicas
+        // Try replicas that contain the key and are healthy
+        if let Some(replica) = self
+            .replicas
             .iter()
             .find(|replica| replica.contains_key(hash) && replica.is_healthy())
         {
             replica.record_access();
-            tracing::warn!(
-                hash,
-                replica_id = replica.config.id,
-                "Primary unhealthy; falling back to replica"
-            );
+            tracing::warn!(hash, replica_id = replica.config.id, "Primary unhealthy; falling back to replica");
             return replica.clone();
         }
 
-        // All are unhealthy; fall back to any shard that contains the key (best effort)
-        if let Some(shard) = self.shards
-            .iter()
-            .find(|shard| shard.contains_key(hash))
-        {
+        // Soft remapping: if primary (and replicas) are unavailable, remap the key
+        // to one of the currently healthy shards using a simple hashed selection.
+        let healthy_shards: Vec<_> = self.shards.iter().filter(|s| s.is_healthy()).cloned().collect();
+        if !healthy_shards.is_empty() {
+            let idx = (hash as usize) % healthy_shards.len();
+            let chosen = &healthy_shards[idx];
+            chosen.record_access();
             tracing::warn!(
                 hash,
-                shard_id = shard.config.id,
-                "All shards unhealthy; using best-effort shard"
+                chosen = chosen.config.id.as_str(),
+                "Primary shard down; remapping key to healthy shard (soft remap)"
             );
+            return chosen.clone();
+        }
+
+        // If no healthy shards exist, fall back to any shard that contains the key
+        if let Some(shard) = self.shards.iter().find(|shard| shard.contains_key(hash)) {
+            tracing::warn!(hash, shard_id = shard.config.id, "All shards unhealthy; using best-effort shard");
             return shard.clone();
         }
 
-        // Fallback to primary shard 0 if none found (should not happen)
+        // Last resort: return first shard
         tracing::error!("No shard found for key; using fallback");
         self.shards[0].clone()
     }
