@@ -1,0 +1,22 @@
+Starting RustDB in primary mode...
+[2m2025-11-20T19:51:06.966041Z[0m [32m INFO[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m75:[0m Initializing shard manager [3mnum_shards[0m[2m=[0m3
+[2m2025-11-20T19:51:06.966940Z[0m [32m INFO[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m94:[0m Initializing shard [3mshard_id[0m[2m=[0m"shard_0" [3mrange_start[0m[2m=[0m0 [3mrange_end[0m[2m=[0m6148914691236517205
+[2m2025-11-20T19:51:06.967695Z[0m [34mDEBUG[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m28:[0m Creating new shard node instance [3mshard_id[0m[2m=[0m"shard_0"
+[2m2025-11-20T19:51:06.968582Z[0m [32m INFO[0m ThreadId(01) [2msrc\shard_monitor.rs[0m[2m:[0m[2m46:[0m Registered shard with monitor [3mshard_id[0m[2m=[0m"shard_0"
+[2m2025-11-20T19:51:06.969377Z[0m [32m INFO[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m94:[0m Initializing shard [3mshard_id[0m[2m=[0m"shard_1" [3mrange_start[0m[2m=[0m6148914691236517205 [3mrange_end[0m[2m=[0m12297829382473034410
+[2m2025-11-20T19:51:06.969731Z[0m [34mDEBUG[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m28:[0m Creating new shard node instance [3mshard_id[0m[2m=[0m"shard_1"
+[2m2025-11-20T19:51:06.970125Z[0m [32m INFO[0m ThreadId(01) [2msrc\shard_monitor.rs[0m[2m:[0m[2m46:[0m Registered shard with monitor [3mshard_id[0m[2m=[0m"shard_1"
+[2m2025-11-20T19:51:06.970779Z[0m [32m INFO[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m94:[0m Initializing shard [3mshard_id[0m[2m=[0m"shard_2" [3mrange_start[0m[2m=[0m12297829382473034410 [3mrange_end[0m[2m=[0m18446744073709551615
+[2m2025-11-20T19:51:06.971208Z[0m [34mDEBUG[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m28:[0m Creating new shard node instance [3mshard_id[0m[2m=[0m"shard_2"
+[2m2025-11-20T19:51:06.971593Z[0m [32m INFO[0m ThreadId(01) [2msrc\shard_monitor.rs[0m[2m:[0m[2m46:[0m Registered shard with monitor [3mshard_id[0m[2m=[0m"shard_2"
+[2m2025-11-20T19:51:06.971972Z[0m [32m INFO[0m ThreadId(01) [2msrc\sharding.rs[0m[2m:[0m[2m103:[0m Shard manager initialization complete
+[2m2025-11-20T19:51:06.972445Z[0m [33m WARN[0m ThreadId(01) [2mC:\Users\mewie\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\jsonrpc-http-server-18.0.0\src\lib.rs[0m[2m:[0m[2m352:[0m Multi-threaded server is not available on Windows. Falling back to single thread.
+RPC Server running on http://0.0.0.0:8000
+RustDB RPC Server running on http://127.0.0.1:8000
+Running in sharded mode with 3 shards
+[2m2025-11-20T19:52:01.769280Z[0m [34mDEBUG[0m ThreadId(02) [2mC:\Users\mewie\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-0.14.32\src\proto\h1\io.rs[0m[2m:[0m[2m211:[0m parsed 6 headers
+[2m2025-11-20T19:52:01.772069Z[0m [34mDEBUG[0m ThreadId(02) [2mC:\Users\mewie\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-0.14.32\src\proto\h1\conn.rs[0m[2m:[0m[2m224:[0m incoming body is content-length (113 bytes)
+[2m2025-11-20T19:52:01.772749Z[0m [34mDEBUG[0m ThreadId(02) [2mC:\Users\mewie\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-0.14.32\src\proto\h1\io.rs[0m[2m:[0m[2m330:[0m flushed 25 bytes
+[2m2025-11-20T19:52:01.773188Z[0m [34mDEBUG[0m ThreadId(02) [2mC:\Users\mewie\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-0.14.32\src\proto\h1\conn.rs[0m[2m:[0m[2m300:[0m incoming body completed
+[2m2025-11-20T19:52:01.773854Z[0m [34mDEBUG[0m ThreadId(02) [2mC:\Users\mewie\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\jsonrpc-core-18.0.0\src\io.rs[0m[2m:[0m[2m210:[0m Response: {"jsonrpc":"2.0","result":{"healthy_count":3,"shards":{"shard_0":"healthy","shard_1":"healthy","shard_2":"healthy"},"total_count":3},"id":1}.
+[2m2025-11-20T19:52:01.774505Z[0m [34mDEBUG[0m ThreadId(02) [2mC:\Users\mewie\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-0.14.32\src\proto\h1\io.rs[0m[2m:[0m[2m330:[0m flushed 265 bytes

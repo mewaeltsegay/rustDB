@@ -1,9 +1,20 @@
+/// Extract a shard key from a SQL query string (first integer found)
+fn extract_shard_key(query: &str) -> Option<u64> {
+    for token in query.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if let Ok(num) = token.parse::<u64>() {
+            return Some(num);
+        }
+    }
+    None
+}
+
 use jsonrpc_core::{Result, IoHandler};
 use jsonrpc_derive::rpc;
 use jsonrpc_http_server::ServerBuilder;
 use crate::database::Database;
 use crate::replication::{ReplicationConfig, ReplicationManager};
 use crate::row::RowInterface;
+use crate::sharding::ShardedDatabase;
 use std::sync::Arc;
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
@@ -16,6 +27,13 @@ pub struct QueryResponse {
     pub success: bool,
     pub message: String,
     pub rows: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ShardHealthResponse {
+    pub shards: std::collections::HashMap<String, String>,
+    pub healthy_count: usize,
+    pub total_count: usize,
 }
 
 #[rpc]
@@ -40,16 +58,49 @@ pub trait Rpc {
 
     #[rpc(name = "replication_register_replica")]
     fn replication_register_replica(&self, url: String) -> Result<bool>;
+
+    #[rpc(name = "shard_health")]
+    fn shard_health(&self) -> Result<ShardHealthResponse>;
+
+    #[rpc(name = "shard_status")]
+    fn shard_status(&self) -> Result<String>;
 }
 
 pub struct RpcServer {
     db: Arc<Mutex<Database>>,
+    sharded_db: Option<Arc<ShardedDatabase>>,
     replication_manager: Arc<Mutex<ReplicationManager>>,
 }
 
 impl RpcServer {
-    pub fn new(config: Option<ReplicationConfig>) -> Self {
+    pub fn new(config: Option<ReplicationConfig>, num_shards: Option<usize>) -> Self {
+        // If sharding is enabled, create sharded database
+        let sharded_db = if let Some(n) = num_shards {
+            // If SHARD_URLS env is set, prefer remote-shard mode (coordinator polling shards)
+            if let Ok(urls_str) = std::env::var("SHARD_URLS") {
+                let urls: Vec<String> = urls_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                tracing::info!("Coordinator running in remote-shard mode with {} shard URLs", urls.len());
+                let sd = Arc::new(ShardedDatabase::new(n));
+                sd.start_heartbeat_checker();
+                sd.start_remote_poller(urls);
+                Some(sd)
+            } else {
+                // local sharded mode (default) - keep local shards alive with periodic heartbeats
+                tracing::info!("Coordinator running in local-shard mode with {} shards", n);
+                let sd = Arc::new(ShardedDatabase::new(n));
+                sd.start_heartbeat_checker();
+                sd.start_local_heartbeat_recorder();
+                Some(sd)
+            }
+        } else {
+            None
+        };
         let db = Arc::new(Mutex::new(Database::new()));
+        
         let replication_manager = Arc::new(Mutex::new(ReplicationManager::new(
             config.unwrap_or_else(|| ReplicationConfig::new_primary()),
             Arc::clone(&db),
@@ -68,6 +119,7 @@ impl RpcServer {
 
         RpcServer {
             db,
+            sharded_db,
             replication_manager,
         }
     }
@@ -92,15 +144,103 @@ impl Rpc for RpcServer {
             });
         }
 
-        let mut db = self.db.lock().unwrap_or_else(|p| p.into_inner());
-        // Execute the query and record for replication
-        crate::sql::execute_sql(&mut db, &query);
-        repl.record_event(query);
-        
+        // Some operations (like CREATE TABLE) need to happen on all shards
+        // We'll capture SELECT results (if any) from the DB we executed against
+        let mut captured_rows: Option<Vec<Vec<String>>> = None;
+
+        // small helper to collect rows for a SELECT from a Database reference
+        let collect_select_rows = |db: &crate::database::Database, query: &str| -> Option<Vec<Vec<String>>> {
+            let q = query.trim_end_matches(';');
+            let upper = q.to_uppercase();
+            if !upper.starts_with("SELECT") || !upper.contains("FROM") {
+                return None;
+            }
+            // parse columns between SELECT and FROM
+            let mut columns: Vec<String> = vec![];
+            let mut table = String::new();
+            let mut where_clause = String::new();
+            if let Some(select_idx) = upper.find("SELECT ") {
+                if let Some(from_idx) = upper.find(" FROM ") {
+                    if from_idx > select_idx + 7 {
+                        let cols = &q[select_idx + 7..from_idx];
+                        columns = cols.split(',').map(|s| s.trim().to_string()).collect();
+                    }
+                    let after_from = &q[from_idx + 6..];
+                    if !after_from.is_empty() {
+                        if let Some(where_idx) = after_from.to_uppercase().find(" WHERE ") {
+                            table = after_from[..where_idx].trim().to_string();
+                            where_clause = after_from[where_idx + 7..].trim().to_string();
+                            if where_clause.is_empty() {
+                                where_clause = "true".to_string();
+                            }
+                        } else {
+                            table = after_from.trim().to_string();
+                            where_clause = "".to_string();
+                        }
+                    }
+                }
+            }
+
+            if table.is_empty() || !db.tables.contains_key(&table) {
+                return Some(Vec::new());
+            }
+
+            let selected_columns = if columns == vec!["*".to_string()] || columns.is_empty() {
+                db.get_table_columns(&table)
+            } else {
+                columns
+            };
+
+            let table_ref = db.tables.get(&table).unwrap();
+            let table_schema_cols = table_ref.schema.columns.clone();
+            let pred = crate::query::query_to_predicate(&table_schema_cols, &where_clause);
+
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            for row in &table_ref.rows {
+                if pred(row.get_values()) {
+                    let mut out_row: Vec<String> = Vec::new();
+                    for col in &selected_columns {
+                        let val = row.get_by_name(col, &table_ref.schema).cloned().unwrap_or_default();
+                        out_row.push(val);
+                    }
+                    rows.push(out_row);
+                }
+            }
+            Some(rows)
+        };
+
+        if let Some(ref sharded_db) = self.sharded_db {
+            if query.to_uppercase().starts_with("CREATE TABLE") {
+                // Broadcast CREATE TABLE to all shards
+                for shard in sharded_db.get_all_shards() {
+                    let mut db = shard.db.lock().unwrap_or_else(|p| p.into_inner());
+                    crate::sql::execute_sql(&mut db, &query);
+                }
+            } else {
+                // Route other queries based on shard key
+                let key = extract_shard_key(&query).unwrap_or(0);
+                let shard = sharded_db.get_shard(&key);
+                let mut db = shard.db.lock().unwrap_or_else(|p| p.into_inner());
+                crate::sql::execute_sql(&mut db, &query);
+                // capture SELECT results from this shard DB if applicable
+                if let Some(rows) = collect_select_rows(&db, &query) {
+                    captured_rows = Some(rows);
+                }
+            }
+        } else {
+            let mut db = self.db.lock().unwrap_or_else(|p| p.into_inner());
+            crate::sql::execute_sql(&mut db, &query);
+            // capture SELECT results from the main DB if applicable
+            if let Some(rows) = collect_select_rows(&db, &query) {
+                captured_rows = Some(rows);
+            }
+        }
+
+        repl.record_event(query.clone());
         Ok(QueryResponse {
             success: true,
             message: "Query executed successfully".to_string(),
-            rows: None, // TODO: Implement proper row capture
+            rows: captured_rows,
         })
     }
 
@@ -165,10 +305,46 @@ impl Rpc for RpcServer {
         repl.add_replica(url);
         Ok(true)
     }
+
+    fn shard_health(&self) -> Result<ShardHealthResponse> {
+        if let Some(ref sharded_db) = self.sharded_db {
+            let status = sharded_db.get_shard_status();
+            let healthy_count = status.values().filter(|v| v == &&"healthy".to_string()).count();
+            let total_count = status.len();
+            Ok(ShardHealthResponse {
+                shards: status,
+                healthy_count,
+                total_count,
+            })
+        } else {
+            Ok(ShardHealthResponse {
+                shards: std::collections::HashMap::new(),
+                healthy_count: 0,
+                total_count: 0,
+            })
+        }
+    }
+
+    fn shard_status(&self) -> Result<String> {
+        if let Some(ref sharded_db) = self.sharded_db {
+            let healthy = sharded_db.get_healthy_shards();
+            let status = sharded_db.get_shard_status();
+            let msg = format!(
+                "Total shards: {}, Healthy: {}, Unhealthy: {}. Status: {:?}",
+                status.len(),
+                healthy.len(),
+                status.len() - healthy.len(),
+                status
+            );
+            Ok(msg)
+        } else {
+            Ok("No sharding enabled on this node".to_string())
+        }
+    }
 }
 
-pub fn start_server(port: u16, config: Option<ReplicationConfig>) -> jsonrpc_http_server::Server {
-    let rpc = RpcServer::new(config);
+pub fn start_server(port: u16, config: Option<ReplicationConfig>, num_shards: Option<usize>) -> jsonrpc_http_server::Server {
+    let rpc = RpcServer::new(config, num_shards);
     let mut io = IoHandler::new();
     io.extend_with(rpc.to_delegate());
 

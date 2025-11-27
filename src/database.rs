@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
-// database.rs
+use std::collections::HashMap;
+
+use crate::row::RowInterface;
+use crate::schema::{ColumnSchema, Schema};
+use crate::table::{Table, TableInterface};
+
 pub trait DatabaseInterface {
     fn create_table_with_constraints(
         &mut self,
@@ -13,24 +18,16 @@ pub trait DatabaseInterface {
     fn create_table(&mut self, table_name: &str, columns: Vec<ColumnSchema>);
     fn list_tables(&self, tables: &Vec<String>);
     fn insert(&mut self, table_name: &str, values: Vec<String>);
-    /// Updates all rows matching the predicate with new values.
     fn update<F>(&mut self, table_name: &str, set_values: Vec<String>, predicate: F)
     where
         F: Fn(&Vec<String>) -> bool;
-    /// Deletes all rows matching the predicate.
     fn delete<F>(&mut self, table_name: &str, predicate: F)
     where
         F: Fn(&Vec<String>) -> bool;
-    /// Selects and prints all rows matching the predicate.
-    fn select<F>(&self, table_name: &str, columns: Vec<String>, predicate: F)
+    fn select<F>(&self, table_name: &str, columns: Vec<String>, predicate: F) -> Vec<Vec<String>>
     where
         F: Fn(&Vec<String>) -> bool;
 }
-
-use crate::row::RowInterface;
-use crate::schema::{ColumnSchema, Schema};
-use crate::table::{Table, TableInterface};
-use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Database {
@@ -38,7 +35,12 @@ pub struct Database {
 }
 
 impl Database {
-    /// Returns the columns of the table with the given name, or an empty vec if not found.
+    pub fn new() -> Self {
+        Database {
+            tables: HashMap::new(),
+        }
+    }
+
     pub fn get_table_columns(&self, table_name: &str) -> Vec<String> {
         if let Some(table) = self.tables.get(table_name) {
             table
@@ -51,15 +53,8 @@ impl Database {
             vec![]
         }
     }
-    pub fn new() -> Self {
-        Database {
-            tables: HashMap::new(),
-        }
-    }
 
-    /// Save the database to a file as JSON
     pub fn save_to_file(&self, path: &str) -> std::io::Result<()> {
-        // Validate path and parent directory
         let path = std::path::Path::new(path);
         if let Some(parent) = path.parent() {
             if !parent.exists() {
@@ -73,15 +68,13 @@ impl Database {
         let json = serde_json::to_string_pretty(self).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
         })?;
-        
+
         let mut file = File::create(path)?;
         file.write_all(json.as_bytes())?;
         Ok(())
     }
 
-    /// Load the database from a file (JSON)
     pub fn load_from_file(path: &str) -> std::io::Result<Self> {
-        // Check if file exists
         let path = std::path::Path::new(path);
         if !path.exists() {
             return Err(std::io::Error::new(
@@ -93,7 +86,7 @@ impl Database {
         let mut file = File::open(path)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
-        
+
         serde_json::from_str(&contents).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
         })
@@ -101,7 +94,6 @@ impl Database {
 }
 
 impl DatabaseInterface for Database {
-    /// Create a table with constraints (primary key and unique columns)
     fn create_table_with_constraints(
         &mut self,
         table_name: &str,
@@ -123,7 +115,6 @@ impl DatabaseInterface for Database {
     }
 
     fn list_tables(&self, tables: &Vec<String>) {
-        // format the list of tables as a table
         println!("Tables in the database:");
         println!("{:-<20}-", "");
 
@@ -166,14 +157,13 @@ impl DatabaseInterface for Database {
         }
     }
 
-    fn select<F>(&self, table_name: &str, columns: Vec<String>, _predicate: F)
+    fn select<F>(&self, table_name: &str, columns: Vec<String>, _predicate: F) -> Vec<Vec<String>>
     where
         F: Fn(&Vec<String>) -> bool,
     {
         if let Some(table) = self.tables.get(table_name) {
             println!("Selecting from table: {}", table_name);
-            // Use named field access
-            let col_names: Vec<_> = if columns == vec!["*"] {
+            let col_names: Vec<_> = if columns == vec!["*".to_string()] {
                 table
                     .schema
                     .columns
@@ -183,7 +173,7 @@ impl DatabaseInterface for Database {
             } else {
                 columns.clone()
             };
-            // Print header
+
             let col_widths: Vec<_> = col_names
                 .iter()
                 .map(|name| {
@@ -200,6 +190,7 @@ impl DatabaseInterface for Database {
                     std::cmp::max(name.len(), max_val)
                 })
                 .collect();
+
             for (h, w) in col_names.iter().zip(&col_widths) {
                 print!("{:<width$} ", h, width = w);
             }
@@ -208,22 +199,27 @@ impl DatabaseInterface for Database {
                 print!("{:-<width$}-", "", width = *w);
             }
             println!();
+
+            let mut results: Vec<Vec<String>> = Vec::new();
             for row in &table.rows {
                 if _predicate(row.get_values()) {
-                    for (col, w) in col_names.iter().zip(&col_widths) {
+                    let mut out_row: Vec<String> = Vec::new();
+                    for (i, col) in col_names.iter().enumerate() {
                         let val = row
                             .get_by_name(col, &table.schema)
-                            .map(|s| s.as_str())
-                            .unwrap_or("");
-                        print!("{:<width$} ", val, width = w);
+                            .map(|s| s.clone())
+                            .unwrap_or_default();
+                        out_row.push(val.clone());
+                        print!("{:<width$} ", val, width = col_widths[i]);
                     }
                     println!();
+                    results.push(out_row);
                 }
             }
+            results
         } else {
             println!("Table not found: {}", table_name);
+            Vec::new()
         }
     }
 }
-
-// tests moved to integration tests in tests/
