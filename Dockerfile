@@ -20,6 +20,9 @@ RUN apt-get update && \
         ca-certificates \
         curl \
         netcat-openbsd \
+        dnsutils \
+        iputils-ping \
+        procps \
         && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder

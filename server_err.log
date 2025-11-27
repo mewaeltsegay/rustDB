@@ -1,0 +1,19 @@
+warning: unused import: `tracing`
+  --> src\main.rs:11:5
+   |
+11 | use tracing;
+   |     ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: function `init_logging` is never used
+  --> src\main.rs:38:4
+   |
+38 | fn init_logging() {
+   |    ^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: `lab` (bin "lab") generated 2 warnings (run `cargo fix --bin "lab"` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.71s
+     Running `target\debug\lab.exe --server --port 8000 --shards 3`

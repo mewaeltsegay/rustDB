@@ -146,7 +146,11 @@ fn main() {
                 let server = server::start_server(port, config, num_shards);
                 println!("RustDB RPC Server running on http://127.0.0.1:{}", port);
                 if num_shards.is_some() {
-                    println!("Running in sharded mode with {} shards", num_shards.unwrap());
+                    if let Ok(shard_id) = std::env::var("SHARD_ID") {
+                        println!("Running as shard container {} in sharded mode", shard_id);
+                    } else {
+                        println!("Running in sharded mode with {} shards", num_shards.unwrap());
+                    }
                 }
                 if is_replica {
                     println!("Syncing with primary server...");

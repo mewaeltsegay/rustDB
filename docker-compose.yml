@@ -1,48 +1,86 @@
 version: "3.8"
 
 services:
-  # Primary server with 4 shards
-  primary:
+  # Coordinator server - single instance that manages 3 shards
+  coordinator:
     build: .
-    container_name: rustdb_primary
-    command: ["--server", "--port", "8000", "--shards", "4", "--replicas", "http://replica1:8001,http://replica2:8002"]
+    container_name: rustdb_coordinator
+    # coordinator is the central server; it will talk to shard containers listed in SHARD_URLS
+    command: ["--server", "--port", "8000", "--shards", "3"]
     ports:
       - "8000:8000"
     environment:
       - RUST_LOG=debug
+      - SHARD_URLS=http://shard_0:8010,http://shard_1:8011,http://shard_2:8012
     networks:
       - rustdb_net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":[],\"id\":1}", "http://localhost:8000/"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 10s
 
-  # First replica (will also run 4 shards)
-  replica1:
+  # Shard 0 container
+  shard_0:
     build: .
-    container_name: rustdb_replica1
-    command: ["--server", "--replica", "--primary-url", "http://primary:8000", "--port", "8001", "--shards", "4"]
+    container_name: rustdb_shard_0
+    command: ["--server", "--port", "8010", "--shards", "1"]
     ports:
-      - "8001:8001"
+      - "8010:8010"
     environment:
       - RUST_LOG=debug
-    depends_on:
-      - primary
+      - SHARD_ID=0
     networks:
       - rustdb_net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/shard_health"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 10s
 
-  # Second replica (will also run 4 shards)
-  replica2:
+  # Shard 1 container
+  shard_1:
     build: .
-    container_name: rustdb_replica2
-    command: ["--server", "--replica", "--primary-url", "http://primary:8000", "--port", "8002", "--shards", "4"]
+    container_name: rustdb_shard_1
+    command: ["--server", "--port", "8011", "--shards", "1"]
     ports:
-      - "8002:8002"
+      - "8011:8011"
     environment:
       - RUST_LOG=debug
-    depends_on:
-      - primary
+      - SHARD_ID=1
     networks:
       - rustdb_net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8011/shard_health"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 10s
+
+  # Shard 2 container
+  shard_2:
+    build: .
+    container_name: rustdb_shard_2
+    command: ["--server", "--port", "8012", "--shards", "1"]
+    ports:
+      - "8012:8012"
+    environment:
+      - RUST_LOG=debug
+      - SHARD_ID=2
+    networks:
+      - rustdb_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8012/shard_health"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 10s
 
   # Client for testing
   client:
@@ -52,9 +90,8 @@ services:
     environment:
       - RUST_LOG=debug
     depends_on:
-      - primary
-      - replica1
-      - replica2
+      coordinator:
+        condition: service_healthy
     networks:
       - rustdb_net
     restart: "no"

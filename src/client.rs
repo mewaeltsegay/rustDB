@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use std::error::Error;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QueryResponse {
@@ -9,25 +11,18 @@ pub struct QueryResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ShardHealthResponse {
+    pub shards: HashMap<String, String>,
+    pub healthy_count: usize,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Serialize)]
 struct JsonRpcRequest {
     jsonrpc: String,
     method: String,
     params: serde_json::Value,
     id: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct JsonRpcResponse {
-    jsonrpc: String,
-    result: Option<serde_json::Value>,
-    error: Option<JsonRpcError>,
-    id: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
 }
 
 pub struct RustDBClient {
@@ -43,7 +38,7 @@ impl RustDBClient {
         }
     }
 
-    fn send_request(&self, method: &str, params: serde_json::Value) -> std::result::Result<serde_json::Value, Box<dyn Error>> {
+    fn send_request<T: DeserializeOwned>(&self, method: &str, params: serde_json::Value) -> Result<T, Box<dyn Error>> {
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -51,38 +46,46 @@ impl RustDBClient {
             id: 1,
         };
 
-        let response: JsonRpcResponse = self.client
+        let resp = self
+            .client
             .post(&self.endpoint)
             .json(&request)
-            .send()?
-            .json()?;
+            .send()?;
 
-        match (response.result, response.error) {
-            (Some(result), _) => Ok(result),
-            (None, Some(error)) => Err(error.message.into()),
-            _ => Err("Invalid response from server".into()),
+        let json: serde_json::Value = resp.json()?;
+
+        if let Some(err) = json.get("error") {
+            // Try to extract a useful error message
+            let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+            return Err(msg.into());
         }
+
+        let result = json.get("result").ok_or("Missing result field in JSON-RPC response")?;
+        Ok(serde_json::from_value(result.clone())?)
     }
 
-    pub fn execute(&self, query: &str) -> std::result::Result<QueryResponse, Box<dyn Error>> {
+    pub fn execute(&self, query: &str) -> Result<QueryResponse, Box<dyn Error>> {
         let params = serde_json::json!([query]);
-        let result = self.send_request("execute", params)?;
-        Ok(serde_json::from_value(result)?)
+        let result: QueryResponse = self.send_request("execute", params)?;
+        Ok(result)
     }
 
-    pub fn ping(&self) -> std::result::Result<String, Box<dyn Error>> {
+    pub fn ping(&self) -> Result<String, Box<dyn Error>> {
         let params = serde_json::json!([]);
-        let result = self.send_request("ping", params)?;
-        Ok(result.as_str()
-            .ok_or("Invalid response type")?
-            .to_string())
+        let result: String = self.send_request("ping", params)?;
+        Ok(result)
     }
 
-    pub fn list_tables(&self) -> std::result::Result<Vec<String>, Box<dyn Error>> {
+    pub fn list_tables(&self) -> Result<Vec<String>, Box<dyn Error>> {
         let params = serde_json::json!([]);
-        let result = self.send_request("list_tables", params)?;
+        let result: Vec<String> = self.send_request("list_tables", params)?;
+        Ok(result)
+    }
 
-        Ok(serde_json::from_value(result)?)
+    pub fn shard_health(&self) -> Result<ShardHealthResponse, Box<dyn Error>> {
+        let params = serde_json::json!([]);
+        let result: ShardHealthResponse = self.send_request("shard_health", params)?;
+        Ok(result)
     }
 }
 
@@ -163,7 +166,7 @@ pub fn run_client_example() -> std::result::Result<(), Box<dyn Error>> {
     // Query data from different shards
     tracing::info!("Querying data from shards...");
     let queries = [
-        "SELECT * FROM Users WHERE id = 1",
+        "SELECT * FROM Users",
         "SELECT * FROM Users WHERE id = 3",
         "SELECT * FROM Orders WHERE order_id = 1001",
         "SELECT * FROM Orders WHERE order_id = 1003",
